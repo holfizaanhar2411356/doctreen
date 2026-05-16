@@ -1,4 +1,5 @@
-run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
+- name: Install Dependencies
+  run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-distrun: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
 name: Laravel
 
 on:
