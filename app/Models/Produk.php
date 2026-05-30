@@ -4,7 +4,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class Produk extends Model
 {
-    protected $table = 'produks';
+    protected $table = 'produk';
     public $timestamps = true;
 
     protected $fillable = [

@@ -15,6 +15,15 @@ return Application::configure(basePath: dirname(__DIR__))
         'auth.petani' => \App\Http\Middleware\AuthPetani::class,
         'auth.konsultan' => \App\Http\Middleware\AuthKonsultan::class,
         'auth.admin' => \App\Http\Middleware\AuthAdmin::class,
+        'auth.admin_or_konsultan' => \App\Http\Middleware\AuthAdminOrKonsultan::class,
+    ]);
+    
+    // Automatically apply force password reset check to all web routes
+    $middleware->appendToGroup('web', \App\Http\Middleware\CheckNeedsPasswordReset::class);
+    
+    // Exempt Midtrans callback from CSRF protection (webhook dari server Midtrans)
+    $middleware->validateCsrfTokens(except: [
+        'midtrans/callback',
     ]);
 })
     ->withExceptions(function (Exceptions $exceptions) {

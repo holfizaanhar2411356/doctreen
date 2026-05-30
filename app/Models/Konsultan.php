@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class Konsultan extends Model
 {
-    protected $table      = 'konsultans';
+    protected $table      = 'konsultan';
     public    $timestamps = true;
 
     protected $fillable = [
@@ -15,6 +15,11 @@ class Konsultan extends Model
         'keahlian',
         'tarif_konsultasi',
         'status',
+        'alamat',
+        'telepon',
+        'foto_profil',
+        'dokumen_tipe',
+        'dokumen_path',
     ];
 
     public function user()

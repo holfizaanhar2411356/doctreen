@@ -25,6 +25,12 @@ class LoginController extends Controller
 
         // Logika login (Asumsi menggunakan satu tabel User dengan kolom 'role')
         if (Auth::attempt([$loginType => $request->identifier, 'password' => $request->password, 'role' => $request->role])) {
+            $user = Auth::user();
+            if ($user->status === 'pending') {
+                Auth::logout();
+                return back()->with('error', 'Akun Anda belum aktif. Harap tunggu verifikasi dari Admin.');
+            }
+            
             $request->session()->regenerate();
 
             // Redirect sesuai peran masing-masing

@@ -19,7 +19,7 @@ class AdminMiddleware
             return $next($request);
         }
 
-        // Jika bukan admin, arahkan ke login dengan pesan error
-        return redirect()->route('login')->with('error', 'Anda tidak memiliki akses Admin.');
+        // Jika bukan admin, arahkan ke login admin dengan pesan error
+        return redirect()->route('admin.login')->with('error', 'Anda tidak memiliki akses Admin.');
     }
 }

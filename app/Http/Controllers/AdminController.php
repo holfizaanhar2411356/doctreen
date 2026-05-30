@@ -8,9 +8,13 @@ use App\Models\Keluhan;
 use App\Models\Toko;
 use App\Models\User;
 use App\Models\Konsultasi;
+use App\Models\Tanaman;
+use App\Models\VideoTanaman;
+use App\Models\Produk;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 class AdminController extends Controller
@@ -36,25 +40,53 @@ class AdminController extends Controller
 
     public function dashboard()
     {
-        $totalPetani    = Petani::count();
-        $totalKonsultan = Konsultan::count();
-        $totalKeluhan   = Keluhan::count();
-        $selesai        = Keluhan::where('status', 'selesai')->count();
+        try {
+            $totalPetani    = Petani::count();
+            $totalKonsultan = Konsultan::where('status', 'aktif')->count();
+            $totalKeluhan   = Keluhan::count();
+            $selesai        = Keluhan::where('status', 'selesai')->count();
 
-        $tokoVerifikasi = Toko::where('status', 'verifikasi')->get();
-        $keluhanTerbaru = Keluhan::with(['petani', 'konsultasi.konsultan'])
-                            ->orderBy('tanggal_keluhan', 'desc')->take(8)->get();
+            // Ambil keluhan terbaru dengan relasi petani (dari tabel petani via id_petani)
+            $keluhanTerbaru = Keluhan::with(['petani', 'konsultasi.konsultan'])
+                                ->orderBy('created_at', 'desc')->take(8)->get();
 
-        $petanis    = Petani::with('user')->withCount('keluhans')->orderBy('created_at','desc')->get();
-        $konsultans = Konsultan::with('user')->orderBy('created_at', 'desc')->get();
-        $tokos      = Toko::with('user')->orderBy('created_at', 'desc')->get();
-        $riwayats   = Konsultasi::with(['keluhan.petani', 'konsultan'])
-                            ->orderBy('tanggal_konsultasi', 'desc')->take(10)->get();
+            // Petani dari tabel petani (bukan users)
+            $petanis    = Petani::with('user')
+                            ->withCount('keluhans')
+                            ->orderBy('created_at', 'desc')->get();
 
-        return view('admin.dashboard', compact(
-            'totalPetani', 'totalKonsultan', 'totalKeluhan', 'selesai',
-            'tokoVerifikasi', 'keluhanTerbaru', 'petanis', 'konsultans', 'tokos', 'riwayats'
-        ));
+            // Konsultan dari tabel konsultan (bukan users)
+            $konsultans = Konsultan::with('user')
+                            ->orderBy('created_at', 'desc')->get();
+
+            $tokos            = Toko::with('user')->orderBy('created_at', 'desc')->get();
+            $tokoVerifikasi   = Toko::where('status', 'aktif')->get();
+
+            // Riwayat konsultasi dari tabel riwayat
+            $riwayats = \App\Models\Riwayat::orderBy('tanggal_waktu', 'desc')->take(20)->get();
+
+            // Riwayat pesanan belanja
+            $riwayatPesanans = \App\Models\Pesanan::with(['petani', 'produk'])
+                            ->orderBy('created_at', 'desc')->take(10)->get();
+
+            // Tanaman & video
+            $tanamanList = Tanaman::with('videos')
+                            ->orderBy('nama_tanaman')->get();
+
+            // Produk
+            $produks = Produk::with('toko')->orderBy('created_at', 'desc')->get();
+
+            $tanamans = $tanamanList;
+            $pesanans = $riwayatPesanans;
+
+            return view('admin.dashboard', compact(
+                'totalPetani', 'totalKonsultan', 'totalKeluhan', 'selesai',
+                'keluhanTerbaru', 'petanis', 'konsultans', 'tokos', 'tokoVerifikasi',
+                'riwayats', 'riwayatPesanans', 'tanamanList', 'produks', 'tanamans', 'pesanans'
+            ));
+        } catch (\Exception $e) {
+            return back()->with('error', 'Gagal memuat dashboard: ' . $e->getMessage());
+        }
     }
 
     // --- CRUD PETANI ---
@@ -160,20 +192,68 @@ class AdminController extends Controller
 
     public function verifikasiKonsultan($id)
     {
-        Konsultan::findOrFail($id)->update(['status' => 'aktif']);
-        return back()->with('success', 'Konsultan berhasil diverifikasi!');
+        try {
+            $konsultan = Konsultan::findOrFail($id);
+            $konsultan->update(['status' => 'aktif']);
+            
+            $user = $konsultan->user;
+            if ($user) {
+                $user->update([
+                    'needs_password_reset' => true,
+                ]);
+
+                try {
+                    \Illuminate\Support\Facades\Mail::raw("Halo {$user->name},\n\nAkun Konsultan Anda telah disetujui oleh Admin. Silakan login ke aplikasi Doctreen dengan kata sandi default Anda. Anda akan diminta untuk membuat sandi baru setelah login.", function ($message) use ($user) {
+                        $message->to($user->email)->subject('Akun Konsultan Doctreen Aktif');
+                    });
+                } catch (\Exception $mailEx) {
+                    // Abaikan jika SMTP offline
+                }
+            }
+
+            return back()->with('success', 'Konsultan berhasil disetujui dan diaktifkan!');
+        } catch (\Exception $e) {
+            return back()->with('error', 'Gagal memverifikasi konsultan: ' . $e->getMessage());
+        }
     }
 
     public function hapusKonsultan($id)
     {
-        $konsultan = Konsultan::findOrFail($id);
-        if ($konsultan->user) {
-            $konsultan->user->delete();
-        } else {
-            $konsultan->delete();
-        }
+        try {
+            $konsultan = Konsultan::findOrFail($id);
+            $user = $konsultan->user;
+            $email = $user ? $user->email : null;
 
-        return back()->with('success', 'Konsultan berhasil dihapus!');
+            // Hapus berkas dari storage
+            $docs = json_decode($konsultan->dokumen_path ?? '', true);
+            if (is_array($docs)) {
+                foreach ($docs as $filePath) {
+                    if (\Illuminate\Support\Facades\Storage::disk('public')->exists($filePath)) {
+                        \Illuminate\Support\Facades\Storage::disk('public')->delete($filePath);
+                    }
+                }
+            }
+
+            if ($user) {
+                $user->delete(); // Ini otomatis men-cascade delete ke konsultan
+            } else {
+                $konsultan->delete();
+            }
+
+            if ($email) {
+                try {
+                    \Illuminate\Support\Facades\Mail::raw("Halo,\n\nMohon maaf, pendaftaran Anda sebagai konsultan di Doctreen belum disetujui oleh Admin karena dokumen kredensial Anda tidak memenuhi kriteria. Silakan daftarkan kembali dengan berkas yang valid.", function ($message) use ($email) {
+                        $message->to($email)->subject('Pendaftaran Konsultan Doctreen Ditolak');
+                    });
+                } catch (\Exception $mailEx) {
+                    // Abaikan jika SMTP offline
+                }
+            }
+
+            return back()->with('success', 'Konsultan berhasil ditolak dan dihapus!');
+        } catch (\Exception $e) {
+            return back()->with('error', 'Gagal menolak konsultan: ' . $e->getMessage());
+        }
     }
 
     public function updateKonsultan(Request $request, $id)
@@ -242,7 +322,11 @@ class AdminController extends Controller
 
     public function verifikasiToko($id)
     {
-        Toko::findOrFail($id)->update(['status' => 'aktif']);
+        $toko = Toko::findOrFail($id);
+        $toko->update(['status' => 'aktif']);
+        if ($toko->user) {
+            $toko->user->update(['needs_password_reset' => true]);
+        }
         return back()->with('success', 'Toko berhasil diverifikasi!');
     }
 
@@ -293,7 +377,7 @@ class AdminController extends Controller
     public function assignKonsultan(Request $request, $id)
     {
         $request->validate([
-            'konsultan_id' => 'required|exists:konsultans,id',
+            'konsultan_id' => 'required|exists:konsultan,id',
             'tanggal_konsultasi' => 'required|date',
         ]);
 
@@ -308,5 +392,156 @@ class AdminController extends Controller
         ]);
 
         return back()->with('success', 'Konsultan berhasil ditugaskan ke keluhan.');
+    }
+
+    /**
+     * Memproses penghapusan riwayat sesi konsultasi oleh admin
+     */
+    public function hapusKonsultasi($id)
+    {
+        $konsultasi = Konsultasi::findOrFail($id);
+        $idKeluhan = $konsultasi->id_keluhan;
+        
+        // Hapus konsultasi terlebih dahulu secara aman
+        $konsultasi->delete();
+        
+        // Hapus keluhan terkait secara permanen
+        if ($idKeluhan) {
+            Keluhan::where('id', $idKeluhan)->delete();
+        }
+
+        return back()->with('success', 'Riwayat sesi konsultasi berhasil dihapus secara permanen!');
+    }
+
+    /**
+     * Memproses penghapusan riwayat pesanan belanja oleh admin
+     */
+    public function hapusPesanan($id)
+    {
+        $pesanan = \App\Models\Pesanan::findOrFail($id);
+        
+        // Kembalikan stok produk jika pesanan dibatalkan/dihapus saat masih menunggu
+        if ($pesanan->status_bayar === 'menunggu' && $pesanan->produk) {
+            $pesanan->produk->increment('stok', $pesanan->kuantitas);
+        }
+        
+        $pesanan->delete();
+
+        return back()->with('success', 'Riwayat transaksi pesanan belanja berhasil dihapus secara permanen!');
+    }
+
+    /**
+     * Mengambil daftar ulasan dan rating untuk konsultan tertentu (AJAX)
+     */
+    public function getUlasanKonsultan($id)
+    {
+        try {
+            $keluhans = Keluhan::whereHas('konsultasi', function($q) use ($id) {
+                    $q->where('id_konsultan', $id);
+                })
+                ->whereNotNull('rating')
+                ->with('petani')
+                ->orderBy('id', 'desc')
+                ->get();
+
+            $ulasans = $keluhans->map(function($k) {
+                return [
+                    'rating' => $k->rating,
+                    'ulasan' => $k->ulasan,
+                    'petani' => $k->petaniUser ? $k->petaniUser->name : 'Petani Anonim',
+                    'tanggal' => optional($k->created_at)->format('d M Y') ?? '-',
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'ulasans' => $ulasans,
+                'avg_rating' => $keluhans->average('rating') ?? 0,
+                'total' => $keluhans->count(),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengambil ulasan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    // =========================================================
+    // CRUD PRODUK
+    // =========================================================
+
+    public function storeProduk(Request $request)
+    {
+        $request->validate([
+            'id_toko'     => 'required|exists:toko,id',
+            'nama_produk' => 'required|string|max:255',
+            'kategori'    => 'nullable|string|max:100',
+            'stok'        => 'required|integer|min:0',
+            'harga'       => 'required|integer|min:0',
+            'deskripsi'   => 'nullable|string',
+            'foto_produk' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
+        ]);
+
+        try {
+            $data = $request->only(['id_toko', 'nama_produk', 'kategori', 'stok', 'harga', 'deskripsi']);
+
+            if ($request->hasFile('foto_produk')) {
+                $data['foto_produk'] = $request->file('foto_produk')->store('produk', 'public');
+            }
+
+            Produk::create($data);
+
+            return back()->with('success', 'Produk berhasil ditambahkan!');
+        } catch (\Exception $e) {
+            return back()->with('error', 'Gagal menambah produk: ' . $e->getMessage());
+        }
+    }
+
+    public function updateProduk(Request $request, $id)
+    {
+        $request->validate([
+            'nama_produk' => 'required|string|max:255',
+            'kategori'    => 'nullable|string|max:100',
+            'stok'        => 'required|integer|min:0',
+            'harga'       => 'required|integer|min:0',
+            'deskripsi'   => 'nullable|string',
+            'foto_produk' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
+        ]);
+
+        try {
+            $produk = Produk::findOrFail($id);
+            $data   = $request->only(['nama_produk', 'kategori', 'stok', 'harga', 'deskripsi']);
+
+            if ($request->hasFile('foto_produk')) {
+                if ($produk->foto_produk && Storage::disk('public')->exists($produk->foto_produk)) {
+                    Storage::disk('public')->delete($produk->foto_produk);
+                }
+                $data['foto_produk'] = $request->file('foto_produk')->store('produk', 'public');
+            }
+
+            $produk->update($data);
+
+            return back()->with('success', 'Produk berhasil diperbarui!');
+        } catch (\Exception $e) {
+            return back()->with('error', 'Gagal memperbarui produk: ' . $e->getMessage());
+        }
+    }
+
+    public function hapusProduk($id)
+    {
+        try {
+            $produk = Produk::findOrFail($id);
+
+            if ($produk->foto_produk && Storage::disk('public')->exists($produk->foto_produk)) {
+                Storage::disk('public')->delete($produk->foto_produk);
+            }
+
+            $produk->delete();
+
+            return back()->with('success', 'Produk berhasil dihapus!');
+        } catch (\Exception $e) {
+            return back()->with('error', 'Gagal menghapus produk: ' . $e->getMessage());
+        }
     }
 }

@@ -4,8 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
-use App\Models\Petani;
-use App\Models\Konsultan;
+use App\Models\KonsultanDocument;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
@@ -18,29 +17,38 @@ class RegisterController extends Controller
         return view('auth.register');
     }
 
+    public function showKonsultanForm()
+    {
+        return view('auth.register-konsultan');
+    }
+
     public function register(Request $request)
     {
-        // 1. Validasi Input (WAJIB menyertakan field tambahan agar terbaca)
         $request->validate([
             'nama'         => 'required|string|max:255',
             'email'        => 'required|string|email|max:255|unique:users',
             'telepon'      => 'required|string|max:15',
             'password'     => 'required|string|min:8|confirmed',
             'role'         => 'required|in:petani,konsultan',
-            'asal'         => 'nullable|string|max:255',         // Tambahkan ini
-            'spesialisasi' => 'nullable|string|max:255',         // Tambahkan ini
+            'asal'         => 'nullable|string|max:255',
+            'spesialisasi' => 'nullable|string|max:255',
             'tarif_konsultasi' => ['nullable','integer','min:0', function($attribute, $value, $fail) {
                 if ($value !== null && $value % 1000 !== 0) {
                     $fail('Tarif konsultasi harus kelipatan 1000.');
                 }
             }],
-
+            'dokumen'   => 'nullable|array',
+            'dokumen.*' => 'file|mimes:pdf,doc,docx,jpeg,png,jpg|max:10240',
         ]);
 
         try {
             DB::beginTransaction();
 
-            // 2. Simpan ke tabel USERS
+            $tarif = $request->tarif_konsultasi;
+            if ($tarif !== null && $tarif >= 1000) {
+                $tarif = (int)($tarif / 1000);
+            }
+
             $user = User::create([
                 'name'     => $request->nama,
                 'email'    => $request->email,
@@ -49,39 +57,51 @@ class RegisterController extends Controller
                 'role'     => $request->role,
             ]);
 
-            // 3. Simpan ke tabel Profil berdasarkan Role
             if ($request->role === 'petani') {
-                Petani::create([
+                \App\Models\Petani::create([
                     'user_id' => $user->id,
                     'nama'    => $request->nama,
-                    'daerah'  => $request->asal, // Cocokkan dengan name="asal" di HTML
+                    'daerah'  => $request->asal,
                 ]);
-            } else {
-                Konsultan::create([
+            } elseif ($request->role === 'konsultan') {
+                $uploadedDocs = [];
+                if ($request->hasFile('dokumen')) {
+                    foreach ($request->file('dokumen') as $file) {
+                        $filePath = $file->store('konsultan_documents', 'public');
+                        $uploadedDocs[] = $filePath;
+                    }
+                }
+
+                \App\Models\Konsultan::create([
                     'user_id'          => $user->id,
                     'nama'             => $request->nama,
-                    'keahlian'         => $request->spesialisasi, // Cocokkan dengan name="spesialisasi"
-                    'tarif_konsultasi' => $request->tarif_konsultasi ?? 0, // input dalam "ribu"
+                    'keahlian'         => $request->spesialisasi,
+                    'tarif_konsultasi' => $tarif,
                     'status'           => 'verifikasi',
+                    'telepon'          => $request->telepon,
+                    'dokumen_tipe'     => 'Portofolio/Sertifikat',
+                    'dokumen_path'     => count($uploadedDocs) > 0 ? json_encode($uploadedDocs) : null,
                 ]);
-
             }
 
             DB::commit();
 
-            Auth::login($user);
-
             if ($user->role === 'petani') {
-                return redirect()->route('petani.dashboard');
+                Auth::login($user);
+                return redirect()->route('petani.dashboard')->with('success', 'Registrasi sukses! Selamat datang.');
             } else {
-                return redirect()->route('konsultan.dashboard');
+                return redirect()->route('register')->with('success', 'Pendaftaran berhasil! Akun Konsultan Anda sukses terdaftar dengan status PENDING dan saat ini sedang menunggu verifikasi dari Admin sebelum dapat digunakan.');
             }
 
         } catch (\Exception $e) {
             DB::rollback();
-            // Debug: Jika masih tidak tersimpan, hapus komentar dd dibawah untuk lihat errornya
-            // dd($e->getMessage()); 
             return back()->withInput()->with('error', 'Pendaftaran gagal: ' . $e->getMessage());
         }
+    }
+
+    public function registerKonsultan(Request $request)
+    {
+        $request->merge(['role' => 'konsultan']);
+        return $this->register($request);
     }
 }

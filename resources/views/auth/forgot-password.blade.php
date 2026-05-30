@@ -115,7 +115,9 @@
 <body>
     <div class="card">
         <div class="header">
-            <a href="/" class="logo">Doc<span>tree</span>n</a>
+            <a href="/" class="logo" style="display: inline-block;">
+                <img src="/images/doctreen_logo.png" alt="Doctreen" style="height: 48px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.15);">
+            </a>
             <h1 class="title">Lupa Password?</h1>
             <p class="sub">Masukkan alamat email Anda untuk mendapatkan tautan pengaturan ulang password.</p>
         </div>

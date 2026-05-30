@@ -49,7 +49,9 @@
 </head>
 <body>
 <div class="auth-left">
-  <a href="/" class="auth-logo">Doc<span>tree</span>n</a>
+  <a href="/" class="auth-logo" style="display: inline-block;">
+    <img src="/images/doctreen_logo.png" alt="Doctreen" style="height: 48px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.25);">
+  </a>
   <div class="auth-tagline">
     <h2>Solusi Cerdas untuk Petani Indonesia</h2>
     <p>Terhubung dengan konsultan pertanian berpengalaman dan dapatkan solusi tepat untuk tanaman Anda.</p>
@@ -107,9 +109,6 @@
 
         <div class="div"><span>atau</span></div>
         <div class="auth-sw">Belum punya akun? <a href="{{ route('register') }}">Daftar sekarang</a></div>
-        <div class="auth-sw" style="margin-top:.75rem">
-            <a href="/admin/login" style="color:#888780; font-size:.8rem">Masuk sebagai Admin →</a>
-        </div>
     </div>
 </div>
 

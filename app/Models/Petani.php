@@ -12,6 +12,7 @@ class Petani extends Model
         'user_id',
         'nama',
         'daerah',
+        'foto_profil',
     ];
 
     public function user()
